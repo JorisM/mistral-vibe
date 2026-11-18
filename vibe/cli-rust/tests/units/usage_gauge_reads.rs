@@ -25,6 +25,7 @@ fn forty() -> Option<Usage> {
     Some(Usage {
         percent: 40.0,
         payg: false,
+        reset_at: None,
     })
 }
 
