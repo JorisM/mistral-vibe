@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::app::App;
 use crate::clock;
@@ -53,6 +54,10 @@ pub fn usage(account: &Value) -> Option<Usage> {
     Some(Usage {
         percent: budget.get("usagePercentage")?.as_f64()?,
         payg: budget.get("paygEnabled").and_then(Value::as_bool) == Some(true),
+        reset_at: budget
+            .get("resetAt")
+            .and_then(Value::as_str)
+            .and_then(|at| OffsetDateTime::parse(at, &Rfc3339).ok()),
     })
 }
 

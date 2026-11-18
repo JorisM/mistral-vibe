@@ -1,5 +1,7 @@
 //! Footer gauges: the context window and the monthly Vibe Code usage, as bars on a track.
 
+use time::OffsetDateTime;
+
 use crate::utils::text::format_compact_count;
 
 use super::footer_fit::{Form, Tone};
@@ -11,6 +13,9 @@ const LEVELS: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█
 /// Without pay-as-you-go the usage fill warns, then alarms, as the allowance runs out.
 const WARN_AT: f64 = 75.0;
 const ALARM_AT: f64 = 90.0;
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 /// The monthly Vibe Code allowance from `account/read`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -18,6 +23,8 @@ pub struct Usage {
     pub percent: f64,
     /// Usage past 100% is billed instead of paused.
     pub payg: bool,
+    /// When the allowance resets; `None` when the backend does not say.
+    pub reset_at: Option<OffsetDateTime>,
 }
 
 /// A fill on a track `cells` wide, eighth-cell precise; any use lights a step and only 100% fills it.
@@ -90,9 +97,15 @@ pub fn context_forms((current, max): (u64, u64)) -> Vec<Form> {
     ]
 }
 
-/// `usage ██▍    40%`, `usage ▃ 40%`, then `usage ▃`; `PAYG` follows when usage past 100% is billed.
+/// `usage ██▍    40% · resets Nov 1`, `usage ▃ 40% · resets Nov 1`, then `usage ▃`;
+/// the reset rides with the numbers and drops when they do. `PAYG` follows when usage past 100% is billed.
 pub fn usage_forms(usage: Option<Usage>) -> Vec<Form> {
-    let Some(Usage { percent, payg }) = usage else {
+    let Some(Usage {
+        percent,
+        payg,
+        reset_at,
+    }) = usage
+    else {
         return vec![];
     };
     let tone = match percent {
@@ -103,9 +116,13 @@ pub fn usage_forms(usage: Option<Usage>) -> Vec<Form> {
     };
     let label = || ("usage ".to_owned(), Tone::Muted);
     let tail = |pct: bool| {
+        let reset = pct
+            .then(|| reset_at.map(|at| format!("resets {}", reset_label(at))))
+            .flatten();
         let parts = [
             pct.then(|| spent_label(percent)),
             payg.then(|| "PAYG".to_owned()),
+            reset,
         ];
         let text = parts.into_iter().flatten().collect::<Vec<_>>().join(" · ");
         (!text.is_empty()).then(|| (format!(" {text}"), Tone::Muted))
@@ -123,4 +140,13 @@ pub fn usage_forms(usage: Option<Usage>) -> Vec<Form> {
             .collect()
     })
     .collect()
+}
+
+/// `Nov 1`: the month short, the day unpadded, the year implicit in the next reset.
+fn reset_label(reset_at: OffsetDateTime) -> String {
+    format!(
+        "{} {}",
+        MONTHS[reset_at.month() as usize - 1],
+        reset_at.day()
+    )
 }

@@ -1,6 +1,8 @@
 //! The footer's context and usage gauges: fill steps, their track, PAYG, how they narrow, and when the usage shows.
 
 use serde_json::{json, Value};
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 use vibe_rs::app::App;
 use vibe_rs::post_ready::AccountReads;
 use vibe_rs::ui::footer_gauge::{bar, level, Usage};
@@ -8,6 +10,10 @@ use vibe_rs::ui::theme;
 use vibe_rs::usage_gauge;
 
 use crate::support::{bottom_bar, bottom_bar_row, column, row};
+
+fn parse(reset_at: &str) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(reset_at, &Rfc3339).ok()
+}
 
 fn app(usage: Value) -> App {
     let mut app = App::default();
@@ -45,14 +51,51 @@ fn a_level_rises_from_the_bottom_and_is_empty_only_at_zero() {
 #[test]
 fn the_usage_reads_from_the_account_budget() {
     let account = |budget: Value| json!({ "budget": budget });
-    let usage = |percent, payg| Some(Usage { percent, payg });
+    let usage = |percent, payg, reset_at| {
+        Some(Usage {
+            percent,
+            payg,
+            reset_at,
+        })
+    };
+    let reset = "2026-11-01T00:00:00Z";
 
     assert_eq!(usage_gauge::usage(&json!({ "status": "ready" })), None);
     assert_eq!(usage_gauge::usage(&account(Value::Null)), None);
     let partial = account(json!({ "usagePercentage": 40.0 }));
-    assert_eq!(usage_gauge::usage(&partial), usage(40.0, false));
-    let spent = account(json!({ "usagePercentage": 100, "paygEnabled": true }));
-    assert_eq!(usage_gauge::usage(&spent), usage(100.0, true));
+    assert_eq!(
+        usage_gauge::usage(&partial),
+        usage(40.0, false, None),
+        "the reset is optional"
+    );
+    let spent = account(json!({ "usagePercentage": 100, "paygEnabled": true, "resetAt": reset }));
+    assert_eq!(
+        usage_gauge::usage(&spent),
+        usage(100.0, true, parse(reset)),
+        "the reset reads as RFC 3339"
+    );
+    let unparseable = account(json!({ "usagePercentage": 40.0, "resetAt": "tomorrow" }));
+    assert_eq!(usage_gauge::usage(&unparseable), usage(40.0, false, None));
+}
+
+#[test]
+fn the_reset_date_reads_by_the_gauge_and_drops_with_the_numbers() {
+    let budget = |payg: bool| json!({ "usagePercentage": 40.0, "paygEnabled": payg, "resetAt": "2026-11-01T00:00:00Z" });
+    let gauge = |app: &mut App| {
+        let row = bottom_bar_row(app, 120);
+        row[row.find("usage").expect("usage")..row.find(" · ctx").expect("ctx")].to_owned()
+    };
+
+    let mut plain = app(budget(false));
+    assert_eq!(gauge(&mut plain), "usage ██▍    40% · resets Nov 1");
+
+    let mut payg = app(budget(true));
+    assert_eq!(gauge(&mut payg), "usage ██▍    40% · PAYG · resets Nov 1");
+
+    let mut narrow = app(budget(false));
+    let row = bottom_bar_row(&mut narrow, 30);
+    assert!(row.contains("usage ▃"), "{row:?}");
+    assert!(!row.contains("resets"), "{row:?}");
 }
 
 #[test]
